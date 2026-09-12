@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.join(ROOT, "data", "listings.json")
+DATA = os.path.join(ROOT, "data", "listings_hyd.json")
 HAZ = os.path.join(ROOT, "data", "hazards.json")
 PUBLIC = os.path.join(ROOT, "public")
 
@@ -49,7 +49,14 @@ def commute_min(lat, lng, wlat, wlng):
 def commute_radius_km(max_min):
     return max(0.5, (max_min - 12) / 4.0)
 
-SCAM = ["pay deposit first", "before viewing", "cash only", "no contract", "whatsapp only", "overseas owner", "meet at mrt"]
+SCAM = ["pay token first", "token amount before", "advance before visit", "cash only", "no agreement", "gpa sale", "litigation", "whatsapp only", "pay deposit first", "before viewing", "no contract", "overseas owner", "meet at mrt"]
+
+def inr(n):
+    try: n = float(n)
+    except: return str(n)
+    if n >= 1e7: return f"₹{n/1e7:.2f} Cr".rstrip("0").rstrip(".")
+    if n >= 1e5: return f"₹{n/1e5:.1f} L"
+    return f"₹{int(n):,}"
 
 def trust_score(L):
     t = L.get("seller_type", "unknown"); d = (L.get("description","") + " " + L.get("seller","")).lower()
@@ -66,11 +73,11 @@ def streetview_url(lat, lng):
     return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
 DEFAULTS = {
-    "city": "Singapore", "property_type": "apartment",
-    "budget_hard": 3500, "floor_min": 5, "floor_max": 10, "floor_tol": 2,
-    "min_beds": 2, "max_commute_min": 35,
-    "work_lat": 1.2841, "work_lng": 103.8511,
-    "exclude_kinds": ["sewage", "industrial", "nuclear"],
+    "city": "Hyderabad", "property_type": "apartment",
+    "budget_hard": 18000000, "floor_min": 5, "floor_max": 10, "floor_tol": 2,
+    "min_beds": 2, "max_commute_min": 30,
+    "work_lat": 17.4148, "work_lng": 78.3488,
+    "exclude_kinds": ["sewage", "industrial", "nuclear", "lake_ftl"],
     "near_lat": None, "near_lng": None, "near_radius_km": None,
 }
 
@@ -86,16 +93,17 @@ def sieve(prefs):
         item["share_path"] = f"/?place={L['id']}"
         score, flags, tnotes = trust_score(L)
         item["trust"] = score; item["scam_flags"] = flags; item["trust_notes"] = tnotes
-        item["why_out"] = []; item["why_fit"] = []; item["bucket"] = "fit"
+        item["why_out"] = []; item["why_fit"] = []; item["bucket"] = "fit"; item["cut_stage"] = None
+        item["price_display"] = inr(L["price"])
         # stage 1: type
         if prefs.get("property_type") and L.get("property_type") != prefs["property_type"]:
-            item["bucket"] = "rejected"; item["why_out"].append(f"type {L.get('property_type')} ≠ {prefs['property_type']}")
+            item["bucket"] = "rejected"; item["cut_stage"] = "type"; item["why_out"].append(f"type {L.get('property_type')} ≠ {prefs['property_type']}")
             rej.append(item); continue
         # stage 2: budget hard
         if L["price"] > prefs["budget_hard"]:
-            item["bucket"] = "rejected"; item["why_out"].append(f"${L['price']} over hard limit ${prefs['budget_hard']}")
+            item["bucket"] = "rejected"; item["cut_stage"] = "budget"; item["why_out"].append(f"{inr(L['price'])} over hard limit {inr(prefs['budget_hard'])}")
             rej.append(item); continue
-        item["why_fit"].append(f"${L['price']} in budget")
+        item["why_fit"].append(f"{inr(L['price'])} in budget")
         # stage 3: floor exact / maybe
         fl, lo, hi, tol = L.get("floor", 0), prefs["floor_min"], prefs["floor_max"], prefs.get("floor_tol", 2)
         if lo <= fl <= hi:
@@ -103,11 +111,11 @@ def sieve(prefs):
         elif lo - tol <= fl <= hi + tol:
             item["bucket"] = "maybe"; item["why_fit"].append(f"floor {fl} close to {lo}-{hi} (maybe)")
         else:
-            item["bucket"] = "rejected"; item["why_out"].append(f"floor {fl} outside {lo}-{hi}±{tol}")
+            item["bucket"] = "rejected"; item["cut_stage"] = "floor"; item["why_out"].append(f"floor {fl} outside {lo}-{hi}±{tol}")
             rej.append(item); continue
         # stage 4: commute perimeter
         if c > prefs["max_commute_min"]:
-            item["bucket"] = "rejected"; item["why_out"].append(f"~{c}min > {prefs['max_commute_min']}min commute")
+            item["bucket"] = "rejected"; item["cut_stage"] = "commute"; item["why_out"].append(f"~{c}min > {prefs['max_commute_min']}min commute")
             rej.append(item); continue
         item["why_fit"].append(f"~{c}min commute")
         # stage 5: exclusion perimeters
@@ -117,11 +125,11 @@ def sieve(prefs):
             if d < h.get("radius_km", 1.0):
                 hit = f"{d:.1f}km from {h['name']}"; break
         if hit:
-            item["bucket"] = "rejected"; item["why_out"].append("excluded: " + hit)
+            item["bucket"] = "rejected"; item["cut_stage"] = "exclusion"; item["why_out"].append("excluded: " + hit)
             rej.append(item); continue
         # stage 6: trust
         if score < 40:
-            item["bucket"] = "rejected"; item["why_out"].append(f"trust {score}/100 ({'; '.join(tnotes)})")
+            item["bucket"] = "rejected"; item["cut_stage"] = "trust"; item["why_out"].append(f"trust {score}/100 ({'; '.join(tnotes)})")
             rej.append(item); continue
         if score < 65:
             item["bucket"] = "maybe"; item["why_fit"].append(f"trust {score}/100 — verify seller")
@@ -141,18 +149,27 @@ def sieve(prefs):
     return fit, maybe, rej, meta
 
 def parse_text(msg, base):
-    p = dict(base); t = msg.lower()
-    m = re.search(r"\$?\s?(\d[\d,]{3,6})", msg.replace(",", ""))
+    p = dict(base); t = msg.lower().replace(",", "")
+    m = re.search(r"(\d+\.?\d*)\s?(cr|crore)", t)
     if m:
-        try: p["budget_hard"] = int(m.group(1))
-        except: pass
-    m = re.search(r"(\d)\s?(br|bed)", t)
+        p["budget_hard"] = int(float(m.group(1)) * 1e7)
+    else:
+        m = re.search(r"(\d+\.?\d*)\s?(l|lakh|lac)", t)
+        if m:
+            p["budget_hard"] = int(float(m.group(1)) * 1e5)
+        else:
+            m = re.search(r"₹?\s?(\d[\d]{5,9})", msg.replace(",", ""))
+            if m:
+                try: p["budget_hard"] = int(m.group(1))
+                except: pass
+    m = re.search(r"(\d)\s?(br|bed|bhk)", t)
     if m: p["min_beds"] = int(m.group(1))
     m = re.search(r"floor[s]?\s*(\d+)\s*[-to]+\s*(\d+)", t)
     if m: p["floor_min"], p["floor_max"] = int(m.group(1)), int(m.group(2))
     m = re.search(r"(\d{2,3})\s?min", t)
     if m: p["max_commute_min"] = int(m.group(1))
-    if "house" in t and "apartment" not in t: p["property_type"] = "house"
+    if "house" in t or "villa" in t: p["property_type"] = "house"
+    if "apartment" in t or "flat" in t: p["property_type"] = "apartment"
     return p
 
 def llm_explain(system, user):
@@ -165,12 +182,30 @@ def llm_explain(system, user):
         return json.load(r)["choices"][0]["message"]["content"]
 
 def local_reply(prefs, fit, maybe, rej):
-    L = [f"Visit {len(fit)}, maybe {len(maybe)}, cut {len(rej)} — ${prefs['budget_hard']} hard, fl {prefs['floor_min']}-{prefs['floor_max']}, ≤{prefs['max_commute_min']}min."]
-    for x in fit[:5]: L.append(f"• VISIT {x['title']} ${x['price']} fl{x['floor']} ~{x['commute_min']}min trust{x['trust']} — {'; '.join(x['why_fit'][:3])}")
-    for x in maybe[:4]: L.append(f"• MAYBE {x['title']} ${x['price']} fl{x['floor']} — {'; '.join(x['why_fit'][-2:])}")
+    L = [f"Visit {len(fit)}, maybe {len(maybe)}, cut {len(rej)} — {inr(prefs['budget_hard'])} hard, fl {prefs['floor_min']}-{prefs['floor_max']}, ≤{prefs['max_commute_min']}min."]
+    for x in fit[:5]: L.append(f"• VISIT {x['title']} {x.get('price_display', x['price'])} fl{x['floor']} ~{x['commute_min']}min trust{x['trust']} — {'; '.join(x['why_fit'][:3])}")
+    for x in maybe[:4]: L.append(f"• MAYBE {x['title']} {x.get('price_display', x['price'])} fl{x['floor']} — {'; '.join(x['why_fit'][-2:])}")
     for x in rej[:4]: L.append(f"• CUT {x['title']} — {'; '.join(x['why_out'][:2])}")
     if not LLM_KEY: L.append("Tip: set LLM_API_KEY in .env for natural-language summaries (sieve already ran).")
     return "\n".join(L)
+
+def stages_summary(fit, maybe, rej):
+    order = ["type", "budget", "floor", "commute", "exclusion", "trust"]
+    labels = {"type": "type check (apartment only)", "budget": "hard budget cap", "floor": "floor band + tolerance",
+              "commute": "commute perimeter", "exclusion": "exclusion zones", "trust": "seller trust"}
+    return [{"stage": s, "label": labels[s],
+             "cut": [{"id": x["id"], "title": x["title"], "reason": "; ".join(x["why_out"][:1])} for x in rej if x.get("cut_stage") == s]}
+            for s in order]
+
+def intel_for_area(area):
+    q = f"{area} Hyderabad apartment buy review"
+    links = {
+        "google": "https://www.google.com/search?q=" + urllib.parse.quote_plus(q + " site:99acres.com OR site:magicbricks.com OR site:housing.com"),
+        "reddit": "https://www.reddit.com/search/?q=" + urllib.parse.quote_plus(f"{area} Hyderabad flat review"),
+        "maps": "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote_plus(f"{area}, Hyderabad"),
+    }
+    return {"area": area, "queries": [q, f"{area} Hyderabad water logging traffic HMDA"],
+            "links": links, "tavily": web_search_stub(q) if TAVILY_KEY else []}
 
 def web_search_stub(query):
     # Teammate hook: plug Tavily/Firecrawl here. Returns [] offline so demo never breaks.
@@ -200,6 +235,9 @@ class H(SimpleHTTPRequestHandler):
         if p == "/api/search":
             q = parse_qs(u.query).get("q", ["apartment"])[0]
             self._json({"query": q, "results": web_search_stub(q)}); return
+        if p == "/api/intel":
+            area = parse_qs(u.query).get("area", ["Financial District"])[0]
+            self._json(intel_for_area(area)); return
         super().do_GET()
     def do_POST(self):
         u = urlparse(self.path); p = u.path
@@ -209,6 +247,7 @@ class H(SimpleHTTPRequestHandler):
         if p in ("/api/sieve", "/api/filter"):
             prefs = {**DEFAULTS, **body}
             fit, maybe, rej, meta = sieve(prefs)
+            meta["stages"] = stages_summary(fit, maybe, rej)
             self._json({"prefs": prefs, "fit": fit, "maybe": maybe, "rejected": rej, "meta": meta,
                         "summary": f"{len(fit)} visit, {len(maybe)} maybe, {len(rej)} cut"}); return
         if p == "/api/chat":
@@ -216,12 +255,13 @@ class H(SimpleHTTPRequestHandler):
             for k in ("work_lat", "work_lng", "near_lat", "near_lng", "near_radius_km", "budget_hard", "floor_min", "floor_max", "max_commute_min"):
                 if k in body: prefs[k] = body[k]
             fit, maybe, rej, meta = sieve(prefs)
-            ctx = f"Prefs ${prefs['budget_hard']} hard, fl {prefs['floor_min']}-{prefs['floor_max']}, <={prefs['max_commute_min']}min. " + \
-                  "Visit: " + "; ".join(f"{x['title']} ${x['price']} fl{x['floor']} ~{x['commute_min']}min" for x in fit[:5]) + \
+            meta["stages"] = stages_summary(fit, maybe, rej)
+            ctx = f"Prefs {inr(prefs['budget_hard'])} hard, fl {prefs['floor_min']}-{prefs['floor_max']}, <={prefs['max_commute_min']}min Hyderabad. " + \
+                  "Visit: " + "; ".join(f"{x['title']} {x.get('price_display', x['price'])} fl{x['floor']} ~{x['commute_min']}min" for x in fit[:5]) + \
                   ". Maybe: " + "; ".join(f"{x['title']} ({'; '.join(x['why_fit'][-1:])})" for x in maybe[:3])
             reply = None
             if LLM_KEY:
-                try: reply = llm_explain("You are HomeHunter, a map-native broker. Give a natural visit plan: VISIT / MAYBE / CUT with 1-line reasons each. Mention street view + share links.", f"User: {body.get('message','')}\n{ctx}")
+                try: reply = llm_explain("You are HomeHunter, a map-native broker in Hyderabad. Give a natural visit plan: VISIT / MAYBE / CUT with 1-line reasons each. Mention street view + share links.", f"User: {body.get('message','')}\n{ctx}")
                 except Exception as e: reply = f"(LLM error: {e})\n" + local_reply(prefs, fit, maybe, rej)
             else: reply = local_reply(prefs, fit, maybe, rej)
             self._json({"reply": reply, "prefs": prefs, "fit": fit, "maybe": maybe, "rejected": rej, "meta": meta}); return

@@ -1,0 +1,3 @@
+id,title,price_inr,beds,floor,total_floors,property_type,lat,lng,area,url,seller,seller_type,posted,description
+hyd-001,2BR Apt Nanakramguda Fl 7,16200000,2,7,20,apartment,17.4126,78.3433,Nanakramguda,https://example.com/l/hyd-001,owner direct,owner,2026-09-10,replace with verified notes
+hyd-002,3BR Apt Gachibowli Fl 6,24000000,3,6,18,apartment,17.4400,78.3480,Gachibowli,https://example.com/l/hyd-002,agency name,agent,2026-09-09,replace with verified notes

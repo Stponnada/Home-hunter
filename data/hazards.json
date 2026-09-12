@@ -1,5 +1,5 @@
 [
-  {"name": "Kranji Sewage Treatment Works", "kind": "sewage", "lat": 1.4311, "lng": 103.7611, "radius_km": 1.5},
-  {"name": "Jurong Industrial / Jurong Island view", "kind": "industrial", "lat": 1.3201, "lng": 103.7041, "radius_km": 2.0},
-  {"name": "Highway noise corridor (AYE Jurong stretch)", "kind": "noise", "lat": 1.3331, "lng": 103.7421, "radius_km": 0.4}
+  {"name": "Kokapet lake FTL buffer — verify boundary with HMDA map", "kind": "lake_ftl", "lat": 17.3897, "lng": 78.33, "radius_km": 0.35},
+  {"name": "Musi river / Amberpet STP belt (far east — reference)", "kind": "sewage", "lat": 17.37, "lng": 78.48, "radius_km": 1.0},
+  {"name": "Patancheru industrial belt (far NW — reference)", "kind": "industrial", "lat": 17.53, "lng": 78.16, "radius_km": 3.0}
 ]
