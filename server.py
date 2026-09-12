@@ -3,7 +3,7 @@ Run: python3 server.py  -> http://localhost:8787
 LLM (optional, explanations only): set LLM_BASE_URL / LLM_API_KEY / LLM_MODEL in .env.
 Sieve is deterministic so demo never breaks without a key.
 """
-import json, math, os, re, shutil, subprocess, urllib.request, urllib.parse
+import json, math, os, re, shutil, subprocess, threading, urllib.request, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -80,6 +80,60 @@ def opencode_chat(message, context="", continue_session=False, session_id=None):
     if p.returncode != 0:
         return None, (out or (p.stderr or "").strip() or f"opencode exited {p.returncode}")[-800:]
     return out, None
+
+def opencode_stream(prompt, context="", session_id=None, on_event=None, timeout=None):
+    """Streaming twin of opencode_chat: --format json events → on_event(ev) live.
+    Returns (full_text, session_id, error). Watchdog kills a hung run."""
+    if not opencode_available():
+        return "", None, "opencode binary not found. Set OPENCODE_BIN in .env."
+    full = (context + "\n\nUser: " + prompt) if context else prompt
+    cmd = [OPENCODE_BIN, "run", "-m", OPENCODE_MODEL, "--format", "json"]
+    if session_id:
+        cmd += ["-s", session_id]
+    cmd.append(full)
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, cwd=ROOT)
+    except Exception as e:
+        return "", None, str(e)
+    watchdog = threading.Timer((timeout or OPENCODE_TIMEOUT) + 60, lambda: (p.kill() if p.poll() is None else None))
+    watchdog.daemon = True
+    watchdog.start()
+    texts, sid = [], None
+    try:
+        for line in p.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            sid = ev.get("sessionID") or sid
+            if on_event:
+                try:
+                    on_event(ev)
+                except Exception:
+                    pass
+            part = ev.get("part") or {}
+            if ev.get("type") == "text" and isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(re.sub(r"\x1b\[[0-9;]*m", "", part["text"]))
+    except Exception as e:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return "".join(texts), sid, f"opencode stream ended early: {e}"
+    finally:
+        watchdog.cancel()
+    p.wait()
+    out = "".join(texts).strip()
+    if p.returncode != 0 and not out:
+        return "", sid, f"opencode exited {p.returncode}"
+    return out, sid, None
+
+def strip_sieve_fence(text):
+    return re.sub(r"```sieve\s*\{.*?\}\s*```", "", text or "", flags=re.S)
 
 def _db():
     import sqlite3
@@ -437,8 +491,9 @@ def gather_web_evidence(places, per_place=3):
                 ev[pid] = out
     return ev
 
-def web_paragraphs(places):
-    """Model-written paragraphs per place from Exa excerpts; extractive fallback. None when no key/evidence."""
+def web_paragraphs(places, on_token=None):
+    """Model-written paragraphs per place from Exa excerpts; extractive fallback. None when no key/evidence.
+    on_token(text) streams summary deltas when provided (SSE path)."""
     if not EXA_KEY or not places:
         return None
     ev = gather_web_evidence(places)
@@ -458,9 +513,38 @@ def web_paragraphs(places):
             prompt = ("For each [place] below, write one short paragraph (2-3 sentences) on what the web says "
                       "about living there. Use ONLY the excerpts; if they say little, say so briefly. "
                       "No invented facts, prices or floors.\n---\n" + "\n".join(lines))
-            text, err = opencode_chat(prompt, context="You are a careful summarizer.")
-            if not err and text:
-                return "\n\nWhat the web says:\n" + text.strip()
+            if on_token is not None:
+                on_token("\n\nWhat the web says:\n")
+                chunks = []
+                def _ev(ev):
+                    part = ev.get("part") or {}
+                    if ev.get("type") == "text" and isinstance(part, dict) and isinstance(part.get("text"), str):
+                        t = re.sub(r"\x1b\[[0-9;]*m", "", part["text"])
+                        chunks.append(t)
+                        on_token(t)
+                text, err = "", None
+                try:
+                    _, _, err = opencode_stream(prompt, context="You are a careful summarizer.", on_event=_ev)
+                    text = "".join(chunks).strip()
+                except Exception as e:
+                    err = str(e)
+                if not err and text:
+                    return "\n\nWhat the web says:\n" + text
+                # model summary failed mid-stream: finish with extractive quotes
+                rest = []
+                for x in places[:6]:
+                    if x["id"] not in ev:
+                        continue
+                    e = ev[x["id"]][0]
+                    rest.append(f"\u2022 {x['title']}: \u201c{e['text'][:300]}\u201d (via {e['domain']})")
+                if rest:
+                    on_token("\n".join(rest))
+                    return "\n\nWhat the web says:\n" + "\n".join(rest)
+                return None
+            else:
+                text, err = opencode_chat(prompt, context="You are a careful summarizer.")
+                if not err and text:
+                    return "\n\nWhat the web says:\n" + text.strip()
     parts = []
     for x in places[:6]:
         if x["id"] not in ev:
@@ -522,7 +606,149 @@ class H(SimpleHTTPRequestHandler):
         if p == "/api/intel":
             area = parse_qs(u.query).get("area", ["Financial District"])[0]
             self._json(intel_for_area(area)); return
+        if p == "/api/chat/stream":
+            self.handle_chat_stream(parse_qs(u.query)); return
         super().do_GET()
+    def handle_chat_stream(self, a):
+        msg = (a.get("message", [""])[0] or "")
+        try:
+            saved = json.loads(a.get("prefs", ["{}"])[0] or "{}")
+        except Exception:
+            saved = {}
+        base = {**DEFAULTS, **saved}
+        for k, f in (("work_lat", float), ("work_lng", float), ("near_lat", float),
+                     ("near_lng", float), ("near_radius_km", float)):
+            if a.get(k, [""])[0] != "":
+                try:
+                    base[k] = f(a[k][0])
+                except Exception:
+                    pass
+        session_id = (a.get("session_id", [""])[0] or "") or None
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        def send(obj):
+            try:
+                self.wfile.write(("data: " + json.dumps(obj) + "\n\n").encode())
+                self.wfile.flush()
+            except Exception:
+                raise ConnectionAbortedError
+
+        def thought(text):
+            send({"type": "thought", "text": text})
+
+        mentioned = mentioned_criteria(msg)
+        if not msg.strip():
+            send({"type": "token", "text": local_conversational_reply("", set())});
+            send({"type": "done"}); return
+        # local fast path when the terminal agent is down
+        if not opencode_available():
+            if not mentioned:
+                send({"type": "token", "text": local_conversational_reply(msg, mentioned)})
+                send({"type": "result", "reply": None, "prefs": base, "fit": [], "maybe": [],
+                      "rejected": [], "meta": {}, "searched": False, "via": "local", "session_id": None})
+                send({"type": "done"}); return
+            thought("Searching your index…")
+            prefs = parse_text(msg, base)
+            fit, maybe, rej, meta = sieve(prefs)
+            meta["stages"] = stages_summary(fit, maybe, rej)
+            send({"type": "token", "text": local_search_reply(prefs, mentioned, fit, maybe, rej)})
+            self.stream_plot(send, fit, maybe, rej)
+            self.stream_sieve_stages(send, fit, maybe, rej, meta)
+            wp = web_paragraphs(fit + maybe)
+            if wp:
+                thought("Attaching what the web says…")
+                send({"type": "token", "text": wp})
+            send({"type": "result", "reply": None, "prefs": prefs, "fit": fit, "maybe": maybe,
+                  "rejected": rej, "meta": meta, "searched": True, "via": "local", "session_id": None})
+            send({"type": "done"}); return
+        # agent path: stream its words live, sieve fence stripped as it arrives
+        stated = []
+        if "budget_hard" in mentioned: stated.append("budget")
+        if "min_beds" in mentioned: stated.append("BHK")
+        if "floor" in mentioned: stated.append("floors")
+        if "max_commute_min" in mentioned: stated.append("commute")
+        thought(f"Understood — searching on {', '.join(stated)}." if stated else "Thinking…")
+        shown = [""]
+        full = [""]
+        sid = [session_id]
+
+        def on_ev2(ev):
+            part = ev.get("part") or {}
+            if isinstance(part, dict) and part.get("type") == "tool":
+                thought(f"Checking {part.get('tool') or part.get('name') or 'listings'}…")
+            if ev.get("type") == "text" and isinstance(part, dict) and isinstance(part.get("text"), str):
+                full[0] += re.sub(r"\x1b\[[0-9;]*m", "", part["text"])
+                if ev.get("sessionID"):
+                    sid[0] = ev["sessionID"]
+                clean = strip_sieve_fence(full[0])
+                if len(clean) > len(shown[0]):
+                    send({"type": "token", "text": clean[len(shown[0]):]})
+                    shown[0] = clean
+
+        try:
+            _, _, err = self.agent_stream(msg, base, sid[0], on_ev2)
+        except ConnectionAbortedError:
+            return
+        except Exception as e:
+            send({"type": "token", "text": f"(stream hiccup: {e} — finishing locally.)"})
+            err = None
+        if err:
+            send({"type": "token", "text": f"(agent wobbled: {err}) " + local_conversational_reply(msg, mentioned)})
+            send({"type": "done"}); return
+        sieved, reply_text = extract_sieve_block(full[0])
+        if not sieved:
+            send({"type": "result", "reply": None, "prefs": base, "fit": [], "maybe": [], "rejected": [],
+                  "meta": {}, "searched": False, "via": "agent", "session_id": sid[0]})
+            send({"type": "done"}); return
+        prefs = dict(base)
+        for k in ("budget_hard", "floor_min", "floor_max", "min_beds", "max_commute_min", "property_type", "listing_type"):
+            if k in sieved:
+                prefs[k] = sieved[k]
+        thought(f"Running the sieve over {len(load_listings())} places…")
+        fit, maybe, rej, meta = sieve(prefs)
+        meta["stages"] = stages_summary(fit, maybe, rej)
+        self.stream_plot(send, fit, maybe, rej)
+        self.stream_sieve_stages(send, fit, maybe, rej, meta)
+        if EXA_KEY and (fit or maybe):
+            thought(f"Checking the web for {min(6, len(fit) + len(maybe))} shortlisted places…")
+            web_paragraphs(fit + maybe, on_token=lambda t: send({"type": "token", "text": t}))
+            thought("Done — pins are on the map.")
+        send({"type": "result", "reply": None, "prefs": prefs, "fit": fit, "maybe": maybe,
+              "rejected": rej, "meta": meta, "searched": True, "via": "agent", "session_id": sid[0]})
+        send({"type": "done"})
+
+    def agent_stream(self, msg, base, session_id, on_ev):
+        work_note = (f"The user's workplace pin is already set on the map at "
+                     f"({base.get('work_lat'):.4f}, {base.get('work_lng'):.4f}). Commute is measured "
+                     f"from there — never ask for the workplace location.")
+        ctx = (AGENT_SYSTEM + "\n" + work_note + "\nIndex areas: " +
+               ", ".join(sorted(set(r.get("area", "?") for r in load_listings()))))
+        return opencode_stream(msg, context=ctx, session_id=session_id, on_event=on_ev)
+
+    def stream_plot(self, send, fit, maybe, rej):
+        try:
+            send({"type": "plot", "places": [
+                {"id": x["id"], "lat": x["lat"], "lng": x["lng"], "title": x["title"]}
+                for x in fit + maybe + rej]})
+        except ConnectionAbortedError:
+            raise
+
+    def stream_sieve_stages(self, send, fit, maybe, rej, meta):
+        import time
+        for st in (meta.get("stages") or []):
+            if not st.get("cut"):
+                continue
+            try:
+                send({"type": "stage", "stage": st["stage"], "label": st["label"],
+                      "cut": [c["id"] for c in st["cut"]]})
+            except ConnectionAbortedError:
+                raise
+            time.sleep(0.45)
+
     def do_POST(self):
         u = urlparse(self.path); p = u.path
         n = int(self.headers.get("Content-Length", 0))

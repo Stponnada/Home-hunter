@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "google-direct": {
+      "name": "Google Direct (free tier)",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": ["GEMINI_API_KEY"],
+      "options": {
+        "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "apiKey": "{env:GEMINI_API_KEY}"
+      },
+      "models": {
+        "gemini-3.6-flash": {
+          "name": "Gemini 3.6 Flash",
+          "tool_call": true,
+          "limit": {
+            "context": 100000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}
