@@ -2,30 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Home Hunter — Hyderabad Financial District</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<link rel="stylesheet" href="style.css"/>
+<title>Home Hunter — Find a place worth visiting</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header><strong>🏠 Home Hunter · Hyderabad</strong><span id="health">…</span>
-<button id="nearBtn">📍 Near me</button>
-<button id="workBtn">💼 Drop work pin: ON (click map)</button></header>
-<main>
-<div id="map"></div>
-<aside id="panel">
-<div class="grid">
-<label>Hard ₹ <input id="budget" type="number" value="18000000" step="100000"/></label>
-<label>Floors <span><input id="floormin" type="number" value="5"/>–<input id="floormax" type="number" value="10"/></span></label>
-<label>≤min <input id="commute" type="number" value="30"/></label>
-</div>
-<p class="hint">100 Financial-District pins plot first, then the sieve cuts them stage by stage • green = commute perimeter • red = exclusion</p>
-<div class="row"><input id="q" placeholder="e.g. apartment under 1.8cr floors 5-10 under 30min"/>
-<button id="go">Sieve</button></div>
-<pre id="reply">Loading…</pre>
-<h3>Visit (<span id="fitN">0</span>)</h3><div id="cards"></div>
-<h3>Maybe (<span id="mayN">0</span>)</h3><div id="maybe"></div>
-<h3>Cut (<span id="rejN">0</span>)</h3><div id="rej"></div>
-</aside>
+<main class="workspace">
+  <section class="map-pane" aria-label="Property map">
+    <div class="map-topbar"><a class="brand" href="/">Home<span>Hunter</span></a><div class="map-status"><i></i><span id="health">Finding your next place</span></div></div>
+    <div id="map"></div><div class="map-tip">Green ring: your commute area · orange pins: close calls</div>
+  </section>
+  <aside class="chat-pane" aria-label="Home search assistant">
+    <div class="chat-head"><div class="avatar">H</div><div><h1>Your home search, in plain English.</h1><p>Tell me what matters. I’ll separate places worth visiting from close calls.</p></div></div>
+    <div id="conversation" class="conversation" aria-live="polite"><div class="message assistant welcome"><p>Hi, I’m Home Hunter. What are you looking for?</p><p class="muted">Try: “A 3 BHK under ₹1.8 crore, floors 5–10, within 30 minutes of Financial District.”</p></div></div>
+    <div class="suggestions" aria-label="Example searches"><button data-prompt="I want a 3 BHK under ₹1.8 crore, between floors 5 and 10, within 30 minutes of Financial District.">3 BHK near work</button><button data-prompt="Show me a spacious apartment under 2 crore with a short commute.">Short commute</button><button data-prompt="I want a quiet apartment with a trustworthy seller. My budget is 1.5 crore.">Quiet &amp; verified</button></div>
+    <form id="composer" class="composer"><label class="sr-only" for="q">Describe your ideal home</label><textarea id="q" rows="1" placeholder="Describe the home you want…"></textarea><button id="go" type="submit" aria-label="Send search">→</button></form>
+    <p class="composer-note">Use budget, bedrooms, floor, commute, or what you want to avoid — naturally.</p>
+  </aside>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>

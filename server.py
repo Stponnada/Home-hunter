@@ -99,12 +99,18 @@ def sieve(prefs):
         if prefs.get("property_type") and L.get("property_type") != prefs["property_type"]:
             item["bucket"] = "rejected"; item["cut_stage"] = "type"; item["why_out"].append(f"type {L.get('property_type')} ≠ {prefs['property_type']}")
             rej.append(item); continue
-        # stage 2: budget hard
+        # stage 2: bedrooms
+        if L.get("beds", 0) < prefs.get("min_beds", 0):
+            item["bucket"] = "rejected"; item["cut_stage"] = "beds"; item["why_out"].append(f"{L.get('beds', 0)} BHK below requested {prefs['min_beds']} BHK")
+            rej.append(item); continue
+        if prefs.get("min_beds"):
+            item["why_fit"].append(f"{L.get('beds', 0)} BHK meets your need")
+        # stage 3: budget hard
         if L["price"] > prefs["budget_hard"]:
             item["bucket"] = "rejected"; item["cut_stage"] = "budget"; item["why_out"].append(f"{inr(L['price'])} over hard limit {inr(prefs['budget_hard'])}")
             rej.append(item); continue
         item["why_fit"].append(f"{inr(L['price'])} in budget")
-        # stage 3: floor exact / maybe
+        # stage 4: floor exact / maybe
         fl, lo, hi, tol = L.get("floor", 0), prefs["floor_min"], prefs["floor_max"], prefs.get("floor_tol", 2)
         if lo <= fl <= hi:
             item["why_fit"].append(f"floor {fl} in {lo}-{hi}")
@@ -113,12 +119,12 @@ def sieve(prefs):
         else:
             item["bucket"] = "rejected"; item["cut_stage"] = "floor"; item["why_out"].append(f"floor {fl} outside {lo}-{hi}±{tol}")
             rej.append(item); continue
-        # stage 4: commute perimeter
+        # stage 5: commute perimeter
         if c > prefs["max_commute_min"]:
             item["bucket"] = "rejected"; item["cut_stage"] = "commute"; item["why_out"].append(f"~{c}min > {prefs['max_commute_min']}min commute")
             rej.append(item); continue
         item["why_fit"].append(f"~{c}min commute")
-        # stage 5: exclusion perimeters
+        # stage 6: exclusion perimeters
         hit = None
         for h in excl:
             d = hav_km(L["lat"], L["lng"], h["lat"], h["lng"])
@@ -127,7 +133,7 @@ def sieve(prefs):
         if hit:
             item["bucket"] = "rejected"; item["cut_stage"] = "exclusion"; item["why_out"].append("excluded: " + hit)
             rej.append(item); continue
-        # stage 6: trust
+        # stage 7: trust
         if score < 40:
             item["bucket"] = "rejected"; item["cut_stage"] = "trust"; item["why_out"].append(f"trust {score}/100 ({'; '.join(tnotes)})")
             rej.append(item); continue
@@ -162,12 +168,16 @@ def parse_text(msg, base):
             if m:
                 try: p["budget_hard"] = int(m.group(1))
                 except: pass
-    m = re.search(r"(\d)\s?(br|bed|bhk)", t)
+    m = re.search(r"(\d)\s?(?:br|bed(?:room)?s?|bhk)", t)
     if m: p["min_beds"] = int(m.group(1))
-    m = re.search(r"floor[s]?\s*(\d+)\s*[-to]+\s*(\d+)", t)
+    m = re.search(r"(?:between\s+)?floor[s]?\s*(\d+)\s*(?:-|–|to|and)\s*(\d+)", t)
+    if not m:
+        m = re.search(r"between\s+(\d+)\s+(?:and|to)\s+(\d+)\s+floor", t)
     if m: p["floor_min"], p["floor_max"] = int(m.group(1)), int(m.group(2))
-    m = re.search(r"(\d{2,3})\s?min", t)
+    m = re.search(r"(?:within|under|less than|≤)?\s*(\d{1,3})\s?(?:min|mins|minutes?)", t)
     if m: p["max_commute_min"] = int(m.group(1))
+    elif "short commute" in t or "near work" in t: p["max_commute_min"] = 30
+    elif "quick commute" in t: p["max_commute_min"] = 25
     if "house" in t or "villa" in t: p["property_type"] = "house"
     if "apartment" in t or "flat" in t: p["property_type"] = "apartment"
     return p
@@ -182,16 +192,18 @@ def llm_explain(system, user):
         return json.load(r)["choices"][0]["message"]["content"]
 
 def local_reply(prefs, fit, maybe, rej):
-    L = [f"Visit {len(fit)}, maybe {len(maybe)}, cut {len(rej)} — {inr(prefs['budget_hard'])} hard, fl {prefs['floor_min']}-{prefs['floor_max']}, ≤{prefs['max_commute_min']}min."]
-    for x in fit[:5]: L.append(f"• VISIT {x['title']} {x.get('price_display', x['price'])} fl{x['floor']} ~{x['commute_min']}min trust{x['trust']} — {'; '.join(x['why_fit'][:3])}")
-    for x in maybe[:4]: L.append(f"• MAYBE {x['title']} {x.get('price_display', x['price'])} fl{x['floor']} — {'; '.join(x['why_fit'][-2:])}")
-    for x in rej[:4]: L.append(f"• CUT {x['title']} — {'; '.join(x['why_out'][:2])}")
-    if not LLM_KEY: L.append("Tip: set LLM_API_KEY in .env for natural-language summaries (sieve already ran).")
+    L = [f"I found {len(fit)} places worth visiting and {len(maybe)} that may be worth visiting. I used your {inr(prefs['budget_hard'])} budget, floor preference, and {prefs['max_commute_min']}-minute commute.", "Worth visiting:"]
+    for x in fit[:5]: L.append(f"• {x['title']} — {x.get('price_display', x['price'])}, floor {x['floor']}, about {x['commute_min']} minutes. {'; '.join(x['why_fit'][:2])}.")
+    if not fit: L.append("• Nothing meets every preference yet — loosen one detail in your next message and I’ll try again.")
+    L.append("Maybe worth visiting:")
+    for x in maybe[:4]: L.append(f"• {x['title']} — {x.get('price_display', x['price'])}, floor {x['floor']}. {'; '.join(x['why_fit'][-2:])}.")
+    if not maybe: L.append("• No close calls right now.")
+    if rej: L.append(f"I left out {len(rej)} places that missed a hard requirement or raised a trust/location concern.")
     return "\n".join(L)
 
 def stages_summary(fit, maybe, rej):
-    order = ["type", "budget", "floor", "commute", "exclusion", "trust"]
-    labels = {"type": "type check (apartment only)", "budget": "hard budget cap", "floor": "floor band + tolerance",
+    order = ["type", "beds", "budget", "floor", "commute", "exclusion", "trust"]
+    labels = {"type": "type check (apartment only)", "beds": "bedroom requirement", "budget": "hard budget cap", "floor": "floor band + tolerance",
               "commute": "commute perimeter", "exclusion": "exclusion zones", "trust": "seller trust"}
     return [{"stage": s, "label": labels[s],
              "cut": [{"id": x["id"], "title": x["title"], "reason": "; ".join(x["why_out"][:1])} for x in rej if x.get("cut_stage") == s]}
@@ -261,7 +273,7 @@ class H(SimpleHTTPRequestHandler):
                   ". Maybe: " + "; ".join(f"{x['title']} ({'; '.join(x['why_fit'][-1:])})" for x in maybe[:3])
             reply = None
             if LLM_KEY:
-                try: reply = llm_explain("You are HomeHunter, a map-native broker in Hyderabad. Give a natural visit plan: VISIT / MAYBE / CUT with 1-line reasons each. Mention street view + share links.", f"User: {body.get('message','')}\n{ctx}")
+                try: reply = llm_explain("You are HomeHunter, a thoughtful Hyderabad home-search assistant. Respond conversationally, then explicitly use the headings 'Worth visiting' and 'Maybe worth visiting'. Name the listings in each group with a short reason. Do not invent listings or claim certainty. Summarize excluded places without listing them unless asked.", f"User: {body.get('message','')}\n{ctx}")
                 except Exception as e: reply = f"(LLM error: {e})\n" + local_reply(prefs, fit, maybe, rej)
             else: reply = local_reply(prefs, fit, maybe, rej)
             self._json({"reply": reply, "prefs": prefs, "fit": fit, "maybe": maybe, "rejected": rej, "meta": meta}); return
