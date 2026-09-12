@@ -1,0 +1,5 @@
+[
+  {"name": "Kranji Sewage Treatment Works", "kind": "sewage", "lat": 1.4311, "lng": 103.7611, "radius_km": 1.5},
+  {"name": "Jurong Industrial / Jurong Island view", "kind": "industrial", "lat": 1.3201, "lng": 103.7041, "radius_km": 2.0},
+  {"name": "Highway noise corridor (AYE Jurong stretch)", "kind": "noise", "lat": 1.3331, "lng": 103.7421, "radius_km": 0.4}
+]

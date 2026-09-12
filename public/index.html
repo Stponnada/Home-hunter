@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Home Hunter — map-native broker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<header><strong>🏠 Home Hunter</strong><span id="health">…</span>
+<button id="nearBtn">📍 Near me</button>
+<button id="workBtn">💼 Drop work pin: ON (click map)</button></header>
+<main>
+<div id="map"></div>
+<aside id="panel">
+<div class="grid">
+<label>Hard $ <input id="budget" type="number" value="3500"/></label>
+<label>Floors <span><input id="floormin" type="number" value="5"/>–<input id="floormax" type="number" value="10"/></span></label>
+<label>≤min <input id="commute" type="number" value="35"/></label>
+</div>
+<p class="hint">Click map to move work pin • drag it too • green circle = commute perimeter • red = exclusion</p>
+<div class="row"><input id="q" placeholder="e.g. apartment under $3400 floors 5-10 under 35min"/>
+<button id="go">Sieve</button></div>
+<pre id="reply">Loading…</pre>
+<h3>Visit (<span id="fitN">0</span>)</h3><div id="cards"></div>
+<h3>Maybe (<span id="mayN">0</span>)</h3><div id="maybe"></div>
+<h3>Cut (<span id="rejN">0</span>)</h3><div id="rej"></div>
+</aside>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body></html>
