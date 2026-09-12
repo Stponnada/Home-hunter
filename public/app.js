@@ -1,11 +1,18 @@
-let map, workPin, commuteCircle, exclLayers = [], markers = [], currentPrefs = {};
+let map, workPin, commuteCircle, exclLayers = [], markers = [], currentPrefs = {}, dropWork = false;
 let work = {lat: 17.4148, lng: 78.3488};
 const $ = id => document.getElementById(id);
 
 map = L.map('map', {zoomControl: false}).setView([17.41, 78.355], 12);
 L.control.zoom({position: 'bottomleft'}).addTo(map);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'}).addTo(map);
-workPin = L.marker([work.lat, work.lng]).addTo(map).bindPopup('<b>Financial District</b><br>Your default commute origin.');
+workPin = L.marker([work.lat, work.lng], {draggable: true}).addTo(map).bindPopup('<b>Financial District</b><br>Your default commute origin. Drag me or use Drop workplace.');
+workPin.on('dragend', () => { const p = workPin.getLatLng(); work = {lat: p.lat, lng: p.lng}; });
+map.on('click', e => {
+  if (!dropWork) return;
+  work = {lat: e.latlng.lat, lng: e.latlng.lng}; workPin.setLatLng(e.latlng);
+  dropWork = false; $('dropWork').textContent = 'Drop workplace'; $('dropWork').classList.remove('active');
+  addAssistant(`Workplace set — I'll measure commute from ${work.lat.toFixed(4)}, ${work.lng.toFixed(4)}.`);
+});
 
 async function api(path, body) {
   const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -17,7 +24,7 @@ function addMessage(text, who='assistant') { const el = document.createElement('
 function addAssistant(text) { return addMessage(text, 'assistant'); }
 function listingCard(x, kind) {
   const why = kind === 'maybe' ? (x.why_fit || []).slice(-2).join(' · ') : (x.why_fit || []).slice(0,3).join(' · ');
-  return `<a class="result-card ${kind}" href="${x.streetview}" target="_blank" rel="noopener" data-id="${x.id}"><div class="result-title"><span>${escapeHtml(x.title)}</span><span>${escapeHtml(x.price_display)}</span></div><div class="result-meta">${x.beds} BHK · ${x.area_sqft ? x.area_sqft.toLocaleString("en-IN") + " sq ft" : "Area not disclosed"} · ${x.floor == null ? "Floor not disclosed" : "Floor " + x.floor + " of " + x.total_floors} · ~${x.commute_min} min commute</div><div class="result-why">${kind === 'maybe' ? 'Worth considering: ' : 'Why it fits: '}${escapeHtml(why)}</div></a>`;
+  return `<a class="result-card ${kind}" href="${x.streetview}" target="_blank" rel="noopener" data-id="${x.id}"><div class="result-title"><span>${escapeHtml(x.title)}</span><span>${escapeHtml(x.price_display)}</span></div><div class="result-meta">${x.beds} BHK · ${escapeHtml((x.area || '').split(',')[0] || 'Financial District')} · ${x.area_sqft ? x.area_sqft.toLocaleString("en-IN") + " sq ft" : "sq ft not disclosed"} · ${x.floor == null ? "Floor not disclosed" : "Floor " + x.floor + " of " + x.total_floors} · ~${x.commute_min} min commute</div><div class="result-why">${kind === 'maybe' ? 'Worth considering: ' : 'Why it fits: '}${escapeHtml(why)}</div></a>`;
 }
 function addResults(r) {
   const box = document.createElement('section');
@@ -36,13 +43,28 @@ function renderMap(r) {
 async function search(message) {
   if (!message.trim()) return;
   addMessage(message, 'user'); $('q').value = ''; $('go').disabled = true;
-  const loading = addAssistant('I’m looking for places that match that…');
+  if (message.trim().startsWith('@agent')) {
+    const loading = addAssistant('Agent is thinking… (opencode terminal)');
+    try {
+      const r = await api('/api/agent', {message: message.replace(/^@agent\s*/, ''), prefs: currentPrefs});
+      loading.remove(); addAssistant(`[agent: ${r.model}] ` + r.reply);
+    } catch (e) { loading.textContent = 'Agent error: ' + e.message; }
+    finally { $('go').disabled = false; $('q').focus(); }
+    return;
+  }
+  const loading = addAssistant('Thinking…');
   try {
     const r = await api('/api/chat', {message, prefs:currentPrefs, work_lat:work.lat, work_lng:work.lng});
-    currentPrefs = r.prefs; loading.remove(); addAssistant(r.reply); addResults(r); renderMap(r);
+    currentPrefs = r.prefs || currentPrefs; loading.remove(); addAssistant((r.via === 'agent' ? `[agent: ${r.model || 'opencode'}] ` : '') + r.reply);
+    if (r.searched) { addResults(r); renderMap(r); }
   } catch (e) { loading.textContent = e.message; }
   finally { $('go').disabled = false; $('q').focus(); }
 }
+$('dropWork').onclick = () => {
+  dropWork = !dropWork;
+  $('dropWork').textContent = dropWork ? 'Click map to place…' : 'Drop workplace';
+  $('dropWork').classList.toggle('active', dropWork);
+};
 $('composer').onsubmit = e => { e.preventDefault(); search($('q').value); };
 $('q').oninput = () => { $('q').style.height = 'auto'; $('q').style.height = Math.min($('q').scrollHeight,120) + 'px'; };
 document.querySelectorAll('[data-prompt]').forEach(b => b.onclick = () => search(b.dataset.prompt));

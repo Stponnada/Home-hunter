@@ -9,7 +9,7 @@
 <body>
 <main class="workspace">
   <section class="map-pane" aria-label="Property map">
-    <div class="map-topbar"><a class="brand" href="/">Home<span>Hunter</span></a><div class="map-status"><i></i><span id="health">Finding your next place</span></div></div>
+    <div class="map-topbar"><a class="brand" href="/">Home<span>Hunter</span></a><button id="dropWork" class="drop-work">Drop workplace</button><div class="map-status"><i></i><span id="health">Finding your next place</span></div></div>
     <div id="map"></div><div class="map-tip">Green ring: your commute area · orange pins: close calls</div>
   </section>
   <aside class="chat-pane" aria-label="Home search assistant">
@@ -17,7 +17,7 @@
     <div id="conversation" class="conversation" aria-live="polite"><div class="message assistant welcome"><p>Hi, I’m Home Hunter. What are you looking for?</p><p class="muted">Try: “A 3 BHK under ₹1.8 crore, floors 5–10, within 30 minutes of Financial District.”</p></div></div>
     <div class="suggestions" aria-label="Example searches"><button data-prompt="I want a 3 BHK under ₹1.8 crore, between floors 5 and 10, within 30 minutes of Financial District.">3 BHK near work</button><button data-prompt="Show me a spacious apartment under 2 crore with a short commute.">Short commute</button><button data-prompt="I want a quiet apartment with a trustworthy seller. My budget is 1.5 crore.">Quiet &amp; verified</button></div>
     <form id="composer" class="composer"><label class="sr-only" for="q">Describe your ideal home</label><textarea id="q" rows="1" placeholder="Describe the home you want…"></textarea><button id="go" type="submit" aria-label="Send search">→</button></form>
-    <p class="composer-note">Use budget, bedrooms, floor, commute, or what you want to avoid — naturally.</p>
+    <p class="composer-note">Use budget, bedrooms, floor, commute, or what you want to avoid — naturally. Start with <b>@agent</b> to chat directly with the opencode terminal agent.</p>
   </aside>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
