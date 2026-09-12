@@ -53,7 +53,7 @@ SCAM = ["pay token first", "token amount before", "advance before visit", "cash 
 
 def inr(n):
     try: n = float(n)
-    except: return str(n)
+    except: return "Price on request"
     if n >= 1e7: return f"₹{n/1e7:.2f} Cr".rstrip("0").rstrip(".")
     if n >= 1e5: return f"₹{n/1e5:.1f} L"
     return f"₹{int(n):,}"
@@ -73,8 +73,8 @@ def streetview_url(lat, lng):
     return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
 DEFAULTS = {
-    "city": "Hyderabad", "property_type": "apartment",
-    "budget_hard": 18000000, "floor_min": 5, "floor_max": 10, "floor_tol": 2,
+    "city": "Hyderabad", "property_type": "any",
+    "budget_hard": 500000000, "floor_min": 1, "floor_max": 40, "floor_tol": 2,
     "min_beds": 2, "max_commute_min": 30,
     "work_lat": 17.4148, "work_lng": 78.3488,
     "exclude_kinds": ["sewage", "industrial", "nuclear", "lake_ftl"],
@@ -96,7 +96,7 @@ def sieve(prefs):
         item["why_out"] = []; item["why_fit"] = []; item["bucket"] = "fit"; item["cut_stage"] = None
         item["price_display"] = inr(L["price"])
         # stage 1: type
-        if prefs.get("property_type") and L.get("property_type") != prefs["property_type"]:
+        if prefs.get("property_type") not in (None, "", "any") and L.get("property_type") != prefs["property_type"]:
             item["bucket"] = "rejected"; item["cut_stage"] = "type"; item["why_out"].append(f"type {L.get('property_type')} ≠ {prefs['property_type']}")
             rej.append(item); continue
         # stage 2: bedrooms
@@ -106,13 +106,16 @@ def sieve(prefs):
         if prefs.get("min_beds"):
             item["why_fit"].append(f"{L.get('beds', 0)} BHK meets your need")
         # stage 3: budget hard
-        if L["price"] > prefs["budget_hard"]:
+        if L.get("price") is not None and L["price"] > prefs["budget_hard"]:
             item["bucket"] = "rejected"; item["cut_stage"] = "budget"; item["why_out"].append(f"{inr(L['price'])} over hard limit {inr(prefs['budget_hard'])}")
             rej.append(item); continue
-        item["why_fit"].append(f"{inr(L['price'])} in budget")
+        if L.get("price") is not None: item["why_fit"].append(f"{inr(L['price'])} in budget")
+        else: item["bucket"] = "maybe"; item["why_fit"].append("price not disclosed")
         # stage 4: floor exact / maybe
-        fl, lo, hi, tol = L.get("floor", 0), prefs["floor_min"], prefs["floor_max"], prefs.get("floor_tol", 2)
-        if lo <= fl <= hi:
+        fl, lo, hi, tol = L.get("floor"), prefs["floor_min"], prefs["floor_max"], prefs.get("floor_tol", 2)
+        if fl is None:
+            item["bucket"] = "maybe"; item["why_fit"].append("floor not disclosed")
+        elif lo <= fl <= hi:
             item["why_fit"].append(f"floor {fl} in {lo}-{hi}")
         elif lo - tol <= fl <= hi + tol:
             item["bucket"] = "maybe"; item["why_fit"].append(f"floor {fl} close to {lo}-{hi} (maybe)")
@@ -145,8 +148,8 @@ def sieve(prefs):
         if prefs.get("near_lat") is not None:
             item["near_km"] = round(hav_km(L["lat"], L["lng"], prefs["near_lat"], prefs["near_lng"]), 2)
         (fit if item["bucket"] == "fit" else maybe).append(item)
-    fit.sort(key=lambda x: (x["price"], x["commute_min"]))
-    maybe.sort(key=lambda x: (x["price"], x["commute_min"]))
+    fit.sort(key=lambda x: (x.get("price") or 10**12, x["commute_min"]))
+    maybe.sort(key=lambda x: (x.get("price") or 10**12, x["commute_min"]))
     if prefs.get("near_lat") is not None and prefs.get("near_radius_km"):
         fit = [x for x in fit if x.get("near_km", 1e9) <= prefs["near_radius_km"]]
         maybe = [x for x in maybe if x.get("near_km", 1e9) <= prefs["near_radius_km"]]
@@ -178,7 +181,7 @@ def parse_text(msg, base):
     if m: p["max_commute_min"] = int(m.group(1))
     elif "short commute" in t or "near work" in t: p["max_commute_min"] = 30
     elif "quick commute" in t: p["max_commute_min"] = 25
-    if "house" in t or "villa" in t: p["property_type"] = "house"
+    if "house" in t or "villa" in t: p["property_type"] = "villa"
     if "apartment" in t or "flat" in t: p["property_type"] = "apartment"
     return p
 

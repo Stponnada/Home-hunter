@@ -17,7 +17,7 @@ function addMessage(text, who='assistant') { const el = document.createElement('
 function addAssistant(text) { return addMessage(text, 'assistant'); }
 function listingCard(x, kind) {
   const why = kind === 'maybe' ? (x.why_fit || []).slice(-2).join(' · ') : (x.why_fit || []).slice(0,3).join(' · ');
-  return `<a class="result-card ${kind}" href="${x.streetview}" target="_blank" rel="noopener" data-id="${x.id}"><div class="result-title"><span>${escapeHtml(x.title)}</span><span>${escapeHtml(x.price_display)}</span></div><div class="result-meta">${x.beds} BHK · Floor ${x.floor} · ~${x.commute_min} min commute</div><div class="result-why">${kind === 'maybe' ? 'Worth considering: ' : 'Why it fits: '}${escapeHtml(why)}</div></a>`;
+  return `<a class="result-card ${kind}" href="${x.streetview}" target="_blank" rel="noopener" data-id="${x.id}"><div class="result-title"><span>${escapeHtml(x.title)}</span><span>${escapeHtml(x.price_display)}</span></div><div class="result-meta">${x.beds} BHK · ${x.area_sqft ? x.area_sqft.toLocaleString("en-IN") + " sq ft" : "Area not disclosed"} · ${x.floor == null ? "Floor not disclosed" : "Floor " + x.floor + " of " + x.total_floors} · ~${x.commute_min} min commute</div><div class="result-why">${kind === 'maybe' ? 'Worth considering: ' : 'Why it fits: '}${escapeHtml(why)}</div></a>`;
 }
 function addResults(r) {
   const box = document.createElement('section');
